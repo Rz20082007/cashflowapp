@@ -1,77 +1,75 @@
 // index.js
 
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const path = require('path');
 const xlsx = require('xlsx');
+const { PrismaClient } = require('@prisma/client');
 
+const prisma = new PrismaClient();
 const app = express();
-const port = 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const db = new sqlite3.Database(':memory:');
-
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT,
-        description TEXT,
-        amount INTEGER,
-        type TEXT
-    )`);
-});
-
 // API untuk mendapatkan semua transaksi
-app.get('/api/transactions', (req, res) => {
-    db.all(`SELECT * FROM transactions ORDER BY date DESC, id DESC`, (err, rows) => {
-        if (err) {
-            res.status(500).send(err.message);
-        } else {
-            res.status(200).json(rows);
-        }
-    });
+app.get('/api/transactions', async (req, res) => {
+    try {
+        const transactions = await prisma.transaction.findMany({
+            orderBy: [
+                { date: 'desc' },
+                { id: 'desc' }
+            ]
+        });
+        res.status(200).json(transactions);
+    } catch (error) {
+        res.status(500).send(error.message);
+    }
 });
 
 // API untuk menambahkan transaksi baru
-app.post('/api/transactions', (req, res) => {
+app.post('/api/transactions', async (req, res) => {
     const { date, description, amount, type } = req.body;
-    db.run(`INSERT INTO transactions (date, description, amount, type) VALUES (?, ?, ?, ?)`, 
-        [date, description, amount, type], function(err) {
-        if (err) {
-            res.status(500).send(err.message);
-        } else {
-            res.status(201).json({ id: this.lastID });
-        }
-    });
+    try {
+        const transaction = await prisma.transaction.create({
+            data: {
+                date,
+                description,
+                amount,
+                type
+            }
+        });
+        res.status(201).json(transaction);
+    } catch (error) {
+        res.status(500).send(error.message);
+    }
 });
 
 // API untuk menghapus transaksi
-app.delete('/api/transactions/:id', (req, res) => {
-    const id = req.params.id;
-    db.run(`DELETE FROM transactions WHERE id = ?`, id, function(err) {
-        if (err) {
-            console.error('Error saat menghapus dari DB:', err.message);
-            res.status(500).send({ message: 'Gagal menghapus transaksi di database' });
-        } else {
-            if (this.changes > 0) {
-                res.status(200).send({ message: 'Transaksi berhasil dihapus' });
-            } else {
-                res.status(404).send({ message: 'Transaksi tidak ditemukan' });
+app.delete('/api/transactions/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const transaction = await prisma.transaction.delete({
+            where: {
+                id: parseInt(id)
             }
-        }
-    });
+        });
+        res.status(200).send({ message: 'Transaksi berhasil dihapus' });
+    } catch (error) {
+        res.status(404).send({ message: 'Transaksi tidak ditemukan' });
+    }
 });
 
 // API untuk ekspor data ke Excel
-app.get('/api/export', (req, res) => {
-    db.all(`SELECT date, description, amount, type FROM transactions ORDER BY date DESC, id DESC`, (err, rows) => {
-        if (err) {
-            return res.status(500).send('Gagal mengekspor data');
-        }
+app.get('/api/export', async (req, res) => {
+    try {
+        const rows = await prisma.transaction.findMany({
+            orderBy: [
+                { date: 'desc' },
+                { id: 'desc' }
+            ]
+        });
 
         const data = [
             ["Tanggal", "Deskripsi", "Jumlah", "Tipe"],
@@ -87,9 +85,12 @@ app.get('/api/export', (req, res) => {
         res.setHeader('Content-Disposition', 'attachment; filename="data_keuangan.xlsx"');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.status(200).send(excelBuffer);
-    });
+    } catch (error) {
+        res.status(500).send('Gagal mengekspor data');
+    }
 });
 
-app.listen(port, () => {
-    console.log(`Server berjalan di http://localhost:${port}`);
-});
+// Ini penting untuk Vercel
+// app.listen() tidak diperlukan karena Vercel akan menjalankannya sendiri
+// Export app agar Vercel bisa menggunakannya
+module.exports = app;
